@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flying Bird - Visual Remastered</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            margin: 0;
+            padding: 0;
+            background: linear-gradient(135deg, #1a1c29 0%, #0d0e15 100%);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+        }
+
+        #game-container {
+            position: relative;
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.8);
+            border-radius: 12px;
+            overflow: hidden;
+            border: 4px solid rgba(255, 255, 255, 0.1);
+        }
+
+        canvas {
+            display: block;
+            background-color: #70c5ce;
+        }
+
+        #instruction {
+            position: absolute;
+            bottom: 12px;
+            width: 100%;
+            text-align: center;
+            color: rgba(255, 255, 255, 0.9);
+            font-size: 13px;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.6);
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <canvas id="gameCanvas" width="360" height="540"></canvas>
+    <div id="instruction">Tekan [SPASI] atau KLIK UNTUK TERBANG</div>
+</div>
+
+<script>
+    const canvas = document.getElementById("gameCanvas");
+    const ctx = canvas.getContext("2d");
+
+    // Variable Permainan
+    let frames = 0;
+    let score = 0;
+    let highScore = localStorage.getItem("fb_high_score") || 0;
+    let gameState = "START"; // START, PLAYING, GAMEOVER
+
+    // Sistem Partikel
+    let particles = [];
+    function createExplosion(x, y) {
+        for (let i = 0; i < 20; i++) {
+            particles.push({
+                x: x,
+                y: y,
+                vx: (Math.random() - 0.5) * 8,
+                vy: (Math.random() - 0.5) * 8,
+                radius: Math.random() * 4 + 2,
+                color: ['#FFD700', '#FF4500', '#FFFFFF', '#2ECC71'][Math.floor(Math.random() * 4)],
+                alpha: 1
+            });
+        }
+    }
+
+    // Awan Latar Belakang
+    const clouds = [
+        { x: 30, y: 80, speed: 0.3, scale: 0.8 },
+        { x: 200, y: 120, speed: 0.5, scale: 1.1 },
+        { x: 320, y: 50, speed: 0.2, scale: 0.6 }
+    ];
+
+    // Burung
+    const bird = {
+        x: 60,
+        y: 200,
+        radius: 14,
+        gravity: 0.25,
+        jump: 4.8,
+        velocity: 0,
+        rotation: 0,
+        wingAngle: 0,
+
+        draw() {
+            ctx.save();
+            ctx.translate(this.x, this.y);
+            
+            // Rotasi berdasarkan kecepatan jatuh/naik
+            this.rotation = Math.min(Math.PI / 4, Math.max(-Math.PI / 6, this.velocity * 0.08));
+            ctx.rotate(this.rotation);
+
+            // Badan Burung (Gradien)
+            let bodyGrad = ctx.createRadialGradient(-2, -2, 2, 0, 0, this.radius);
+            bodyGrad.addColorStop(0, '#FFE600');
+            bodyGrad.addColorStop(1, '#FF8800');
+
+            ctx.fillStyle = bodyGrad;
+            ctx.beginPath();
+            ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = '#552200';
+            ctx.stroke();
+
+            // Sayap (Animasi mengepak)
+            this.wingAngle = Math.sin(frames * 0.2) * 8;
+            ctx.fillStyle = '#FFAA00';
+            ctx.beginPath();
+            ctx.ellipse(-4, 2, 8, 5, (this.wingAngle * Math.PI) / 180, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+
+            // Mata
+            ctx.fillStyle = "#FFF";
+            ctx.beginPath();
+            ctx.arc(5, -5, 5, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+
+            // Pupil
+            ctx.fillStyle = "#000";
+            ctx.beginPath();
+            ctx.arc(7, -5, 2, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Paruh
+            let beakGrad = ctx.createLinearGradient(8, 0, 18, 0);
+            beakGrad.addColorStop(0, '#FF4500');
+            beakGrad.addColorStop(1, '#FF0000');
+            ctx.fillStyle = beakGrad;
+            ctx.beginPath();
+            ctx.moveTo(8, -1);
+            ctx.lineTo(17, 3);
+            ctx.lineTo(8, 7);
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+
+            ctx.restore();
+        },
+
+        flap() {
+            this.velocity = -this.jump;
+            // Partikel hembusan angin saat melompat
+            for (let i = 0; i < 5; i++) {
+                particles.push({
+                    x: this.x - 10,
+                    y: this.y + (Math.random() * 10 - 5),
+                    vx: -2 - Math.random() * 2,
+                    vy: (Math.random() - 0.5) * 2,
+                    radius: Math.random() * 3 + 1,
+                    color: 'rgba(255,255,255,0.7)',
+                    alpha: 1
+                });
+            }
+        },
+
+        update() {
+            if (gameState === "PLAYING") {
+                this.velocity += this.gravity;
+                this.y += this.velocity;
+
+                // Nabrak lantai
+                if (this.y + this.radius >= canvas.height - 40) {
+                    this.y = canvas.height - 40 - this.radius;
+                    createExplosion(this.x, this.y);
+                    gameOver();
+                }
+
+                // Nabrak langit-langit
+                if (this.y - this.radius <= 0) {
+                    this.y = this.radius;
+                    this.velocity = 0;
+                }
+            } else if (gameState === "START") {
+                this.y = 200 + Math.sin(frames * 0.08) * 8;
+            }
+        },
+
+        reset() {
+            this.y = 200;
+            this.velocity = 0;
+            this.rotation = 0;
+        }
+    };
+
+    // Pipa
+    const pipes = {
+        position: [],
+        topGap: 130,
+        dx: 2.2,
+        width: 54,
+
+        draw() {
+            for (let i = 0; i < this.position.length; i++) {
+                let p = this.position[i];
+                let topY = p.y;
+                let bottomY = p.y + this.topGap;
+
+                // Gradien Warna Pipa
+                let pipeGrad = ctx.createLinearGradient(p.x, 0, p.x + this.width, 0);
+                pipeGrad.addColorStop(0, '#27AE60');
+                pipeGrad.addColorStop(0.3, '#2ECC71');
+                pipeGrad.addColorStop(0.7, '#2ECC71');
+                pipeGrad.addColorStop(1, '#1E8449');
+
+                // Pipa Atas
+                ctx.fillStyle = pipeGrad;
+                ctx.fillRect(p.x, 0, this.width, topY);
+                ctx.strokeStyle = '#145A32';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(p.x, 0, this.width, topY);
+
+                // Topi Pipa Atas
+                ctx.fillRect(p.x - 3, topY - 20, this.width + 6, 20);
+                ctx.strokeRect(p.x - 3, topY - 20, this.width + 6, 20);
+
+                // Pipa Bawah
+                let bottomHeight = canvas.height - bottomY - 40;
+                ctx.fillRect(p.x, bottomY, this.width, bottomHeight);
+                ctx.strokeRect(p.x, bottomY, this.width, bottomHeight);
+
+                // Topi Pipa Bawah
+                ctx.fillRect(p.x - 3, bottomY, this.width + 6, 20);
+                ctx.strokeRect(p.x - 3, bottomY, this.width + 6, 20);
+            }
+        },
+
+        update() {
+            if (gameState !== "PLAYING") return;
+
+            if (frames % 90 === 0) {
+                this.position.push({
+                    x: canvas.width,
+                    y: Math.floor(Math.random() * (canvas.height - 240 - this.topGap)) + 50
+                });
+            }
+
+            for (let i = 0; i < this.position.length; i++) {
+                let p = this.position[i];
+                p.x -= this.dx;
+
+                let bottomPipeY = p.y + this.topGap;
+
+                // Deteksi Tabrakan
+                if (
+                    bird.x + bird.radius - 3 > p.x &&
+                    bird.x - bird.radius + 3 < p.x + this.width &&
+                    (bird.y - bird.radius + 3 < p.y || bird.y + bird.radius - 3 > bottomPipeY)
+                ) {
+                    createExplosion(bird.x, bird.y);
+                    gameOver();
+                }
+
+                // Hitung Skor
+                if (p.x + this.width < bird.x && !p.passed) {
+                    score++;
+                    p.passed = true;
+                    if (score > highScore) {
+                        highScore = score;
+                        localStorage.setItem("fb_high_score", highScore);
+                    }
+                }
+
+                // Hapus Pipa Lewat
+                if (p.x + this.width <= 0) {
+                    this.position.shift();
+                }
+            }
+        },
+
+        reset() {
+            this.position = [];
+        }
+    };
+
+    // Latar Belakang Lingkungan (Awan & Pegunungan)
+    function drawEnvironment() {
+        // Langit Gradien
+        let skyGrad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+        skyGrad.addColorStop(0, '#4A90E2');
+        skyGrad.addColorStop(0.7, '#50E3C2');
+        skyGrad.addColorStop(1, '#B8E986');
+        ctx.fillStyle = skyGrad;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Awan Bergerak
+        ctx.fillStyle = "rgba(255, 255, 255, 0.75)";
+        clouds.forEach(c => {
+            if (gameState === "PLAYING") c.x -= c.speed;
+            if (c.x < -60) c.x = canvas.width + 40;
+
+            ctx.beginPath();
+            ctx.arc(c.x, c.y, 18 * c.scale, 0, Math.PI * 2);
+            ctx.arc(c.x + 15 * c.scale, c.y - 10 * c.scale, 22 * c.scale, 0, Math.PI * 2);
+            ctx.arc(c.x + 35 * c.scale, c.y, 18 * c.scale, 0, Math.PI * 2);
+            ctx.fill();
+        });
+    }
+
+    // Tanah Bergerak
+    const ground = {
+        x: 0,
+        height: 40,
+        draw() {
+            let fgGrad = ctx.createLinearGradient(0, canvas.height - this.height, 0, canvas.height);
+            fgGrad.addColorStop(0, '#5D4037');
+            fgGrad.addColorStop(1, '#3E2723');
+
+            ctx.fillStyle = fgGrad;
+            ctx.fillRect(0, canvas.height - this.height, canvas.width, this.height);
+
+            // Rumput Atas
+            ctx.fillStyle = '#7CB342';
+            ctx.fillRect(0, canvas.height - this.height, canvas.width, 8);
+            ctx.fillStyle = '#8BC34A';
+            ctx.fillRect(0, canvas.height - this.height, canvas.width, 3);
+
+            // Garis Detail Bergerak
+            ctx.strokeStyle = 'rgba(0, 0, 0, 0.15)';
+            ctx.lineWidth = 3;
+            for (let i = this.x % 16; i < canvas.width; i += 16) {
+                ctx.beginPath();
+                ctx.moveTo(i, canvas.height - this.height + 8);
+                ctx.lineTo(i - 6, canvas.height);
+                ctx.stroke();
+            }
+        },
+        update() {
+            if (gameState === "PLAYING") {
+                this.x = (this.x - 2.2) % 16;
+            }
+        }
+    };
+
+    // Update & Draw Partikel
+    function handleParticles() {
+        for (let i = particles.length - 1; i >= 0; i--) {
+            let p = particles[i];
+            p.x += p.vx;
+            p.y += p.vy;
+            p.alpha -= 0.03;
+
+            if (p.alpha <= 0) {
+                particles.splice(i, 1);
+            } else {
+                ctx.save();
+                ctx.globalAlpha = p.alpha;
+                ctx.fillStyle = p.color;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+        }
+    }
+
+    // Antarmuka (UI)
+    function drawUI() {
+        ctx.textAlign = "center";
+
+        if (gameState === "START") {
+            ctx.fillStyle = "#FFF";
+            ctx.strokeStyle = "#000";
+            ctx.lineWidth = 4;
+            
+            ctx.font = "900 28px 'Segoe UI', sans-serif";
+            ctx.strokeText("FLYING BIRD", canvas.width / 2, 150);
+            ctx.fillText("FLYING BIRD", canvas.width / 2, 150);
+
+            ctx.font = "600 15px 'Segoe UI', sans-serif";
+            ctx.lineWidth = 3;
+            ctx.strokeText("Klik / Tekan Spasi untuk Mulai", canvas.width / 2, 280);
+            ctx.fillText("Klik / Tekan Spasi untuk Mulai", canvas.width / 2, 280);
+        } else if (gameState === "PLAYING") {
+            ctx.fillStyle = "#FFF";
+            ctx.strokeStyle = "#000";
+            ctx.lineWidth = 5;
+            ctx.font = "900 40px 'Segoe UI', sans-serif";
+            ctx.strokeText(score, canvas.width / 2, 70);
+            ctx.fillText(score, canvas.width / 2, 70);
+        } else if (gameState === "GAMEOVER") {
+            // Overlay Transparan
+            ctx.fillStyle = "rgba(0, 0, 0, 0.4)";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Kotak Skor
+            ctx.fillStyle = "#FFF8DC";
+            ctx.strokeStyle = "#8B4513";
+            ctx.lineWidth = 4;
+            ctx.roundRect(canvas.width / 2 - 110, 160, 220, 170, 10);
+            ctx.fill();
+            ctx.stroke();
+
+            ctx.fillStyle = "#E67E22";
+            ctx.font = "900 24px 'Segoe UI', sans-serif";
+            ctx.fillText("GAME OVER", canvas.width / 2, 200);
+
+            ctx.fillStyle = "#333";
+            ctx.font = "600 16px 'Segoe UI', sans-serif";
+            ctx.fillText(`Skor: ${score}`, canvas.width / 2, 235);
+            ctx.fillText(`Terbaik: ${highScore}`, canvas.width / 2, 265);
+
+            ctx.fillStyle = "#27AE60";
+            ctx.font = "bold 13px 'Segoe UI', sans-serif";
+            ctx.fillText("Klik untuk Main Lagi", canvas.width / 2, 305);
+        }
+    }
+
+    // Kontrol Input
+    function handleAction() {
+        if (gameState === "START") {
+            gameState = "PLAYING";
+            bird.flap();
+        } else if (gameState === "PLAYING") {
+            bird.flap();
+        } else if (gameState === "GAMEOVER") {
+            pipes.reset();
+            bird.reset();
+            score = 0;
+            gameState = "PLAYING";
+        }
+    }
+
+    document.addEventListener("keydown", (e) => {
+        if (e.code === "Space") handleAction();
+    });
+
+    canvas.addEventListener("mousedown", handleAction);
+
+    function gameOver() {
+        gameState = "GAMEOVER";
+    }
+
+    // Main Game Loop
+    function loop() {
+        drawEnvironment();
+
+        pipes.update();
+        pipes.draw();
+
+        ground.update();
+        ground.draw();
+
+        bird.update();
+        bird.draw();
+
+        handleParticles();
+        drawUI();
+
+        frames++;
+        requestAnimationFrame(loop);
+    }
+
+    loop();
+</script>
+
+</body>
+</html>
